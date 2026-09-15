@@ -293,7 +293,8 @@ if [[ "$SETUP_MODE" == "kvm" ]]; then
     mkdir -p "$SHARE_MOUNT_POINT"
 
     if grep -qw virtiofs /proc/filesystems; then
-        FSTAB_LINE="$SHARE_TAG $SHARE_MOUNT_POINT virtiofs defaults,nofail 0 0"
+        # x-gvfs-hide prevents GUI file managers (like Thunar) from creating dummy phantom icons in the sidebar
+        FSTAB_LINE="$SHARE_TAG $SHARE_MOUNT_POINT virtiofs defaults,x-gvfs-hide,nofail 0 0"
         log_info "Using virtiofs for shared folder."
     else
         FSTAB_LINE="$SHARE_TAG $SHARE_MOUNT_POINT 9p trans=virtio,version=9p2000.L,rw,_netdev,nofail 0 0"
@@ -371,3 +372,12 @@ log_info "Recommended next step: reboot the VM."
 1. This script is safe to rerun; it avoids duplicate `fstab` entries.
 2. The script always uses your manual mode selection (KVM or normal).
 3. If shared folder mount fails, verify target tag (`kali_share`) and driver type in `virt-manager`.
+
+### Important: Fedora/SELinux Host Fix
+
+If you are running Fedora on the host, SELinux will automatically block KVM (`virtiofsd`) from accessing the shared folder (resulting in an empty directory or "Permission denied" errors inside the guest). 
+
+You MUST run this command on your **Host System (Fedora)** to fix the security context of the folder before using the share:
+```bash
+sudo chcon -R -t svirt_image_t /home/smilo/Desktop/SharedFolder
+```
