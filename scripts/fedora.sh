@@ -4,8 +4,6 @@
 set -Eeuo pipefail
 umask 022
 
-echo "=== System Setup & Catppuccin GRUB Theme Installer for Fedora ==="
-
 # Ensure the script is run with sudo/root privileges
 if [ "$EUID" -ne 0 ]; then
   echo "Please run this script with sudo:"
@@ -52,57 +50,90 @@ INSTALL_GHOSTTY=true
 INSTALL_BTOP=true
 INSTALL_CLI_UTILS=true
 INSTALL_VLC=true
-INSTALL_STEAM_DISCORD=true
+INSTALL_DISCORD=true
 INSTALL_OBSIDIAN=true
 INSTALL_KVM=true
 INSTALL_GRUB_THEME=true
 INSTALL_DESKTOP_THEMES=true
 INSTALL_ANYDESK=true
 
-FEATURE_FLAGS="INSTALL_MULTIMEDIA INSTALL_NVIDIA INSTALL_ZSH INSTALL_FRESH INSTALL_BRAVE INSTALL_VSCODE INSTALL_GHOSTTY INSTALL_BTOP INSTALL_CLI_UTILS INSTALL_VLC INSTALL_STEAM_DISCORD INSTALL_OBSIDIAN INSTALL_KVM INSTALL_GRUB_THEME INSTALL_DESKTOP_THEMES INSTALL_ANYDESK"
+FEATURE_FLAGS="INSTALL_MULTIMEDIA INSTALL_NVIDIA INSTALL_ZSH INSTALL_FRESH INSTALL_BRAVE INSTALL_VSCODE INSTALL_GHOSTTY INSTALL_BTOP INSTALL_CLI_UTILS INSTALL_VLC INSTALL_DISCORD INSTALL_OBSIDIAN INSTALL_KVM INSTALL_GRUB_THEME INSTALL_DESKTOP_THEMES INSTALL_ANYDESK"
 
 show_menu() {
   local choice name
+  # Use /dev/tty for interactive I/O so it works even when stdout is redirected
+  exec 3>/dev/tty 4</dev/tty
   while true; do
-    clear
-    echo "==============================================="
-    echo "        Fedora Workstation Setup Options       "
-    echo "==============================================="
-    printf " 1) [%-3s] Multimedia codecs       9) [%-3s] CLI utilities\n" "$([[ $INSTALL_MULTIMEDIA == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_CLI_UTILS == true ]] && echo ON || echo OFF)"
-    printf " 2) [%-3s] Nvidia drivers         10) [%-3s] VLC\n" "$([[ $INSTALL_NVIDIA == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_VLC == true ]] && echo ON || echo OFF)"
-    printf " 3) [%-3s] Zsh and plugins        11) [%-3s] Steam and Discord\n" "$([[ $INSTALL_ZSH == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_STEAM_DISCORD == true ]] && echo ON || echo OFF)"
-    printf " 4) [%-3s] Fresh shell manager    12) [%-3s] Obsidian\n" "$([[ $INSTALL_FRESH == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_OBSIDIAN == true ]] && echo ON || echo OFF)"
-    printf " 5) [%-3s] Brave browsers         13) [%-3s] KVM and shared folder\n" "$([[ $INSTALL_BRAVE == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_KVM == true ]] && echo ON || echo OFF)"
-    printf " 6) [%-3s] VS Code                14) [%-3s] GRUB theme\n" "$([[ $INSTALL_VSCODE == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_GRUB_THEME == true ]] && echo ON || echo OFF)"
-    printf " 7) [%-3s] Ghostty                15) [%-3s] Desktop themes\n" "$([[ $INSTALL_GHOSTTY == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_DESKTOP_THEMES == true ]] && echo ON || echo OFF)"
-    printf " 8) [%-3s] btop                  16) [%-3s] AnyDesk\n" "$([[ $INSTALL_BTOP == true ]] && echo ON || echo OFF)" "$([[ $INSTALL_ANYDESK == true ]] && echo ON || echo OFF)"
-    echo
-    echo " r) Run setup   a) All on   n) All off   q) Quit"
-    read -rp "Choose: " choice
+    clear >&3
+    printf "===============================================\n" >&3
+    printf "        Fedora Workstation Setup Options       \n" >&3
+    printf "===============================================\n" >&3
+    printf " 1) [%-3s] Multimedia codecs       9) [%-3s] CLI utilities\n"    \
+      "$([[ $INSTALL_MULTIMEDIA == true ]] && echo ON || echo OFF)"          \
+      "$([[ $INSTALL_CLI_UTILS  == true ]] && echo ON || echo OFF)"  >&3
+    printf " 2) [%-3s] Nvidia drivers         10) [%-3s] VLC\n"              \
+      "$([[ $INSTALL_NVIDIA  == true ]] && echo ON || echo OFF)"             \
+      "$([[ $INSTALL_VLC     == true ]] && echo ON || echo OFF)"     >&3
+    printf " 3) [%-3s] Zsh and plugins        11) [%-3s] Discord\n"          \
+      "$([[ $INSTALL_ZSH     == true ]] && echo ON || echo OFF)"             \
+      "$([[ $INSTALL_DISCORD == true ]] && echo ON || echo OFF)"     >&3
+    printf " 4) [%-3s] Fresh shell manager    12) [%-3s] Obsidian\n"         \
+      "$([[ $INSTALL_FRESH    == true ]] && echo ON || echo OFF)"            \
+      "$([[ $INSTALL_OBSIDIAN == true ]] && echo ON || echo OFF)"    >&3
+    printf " 5) [%-3s] Brave browsers         13) [%-3s] KVM and shared folder\n" \
+      "$([[ $INSTALL_BRAVE == true ]] && echo ON || echo OFF)"               \
+      "$([[ $INSTALL_KVM   == true ]] && echo ON || echo OFF)"       >&3
+    printf " 6) [%-3s] VS Code                14) [%-3s] GRUB theme\n"       \
+      "$([[ $INSTALL_VSCODE     == true ]] && echo ON || echo OFF)"          \
+      "$([[ $INSTALL_GRUB_THEME == true ]] && echo ON || echo OFF)"  >&3
+    printf " 7) [%-3s] Ghostty                15) [%-3s] Desktop themes\n"   \
+      "$([[ $INSTALL_GHOSTTY        == true ]] && echo ON || echo OFF)"      \
+      "$([[ $INSTALL_DESKTOP_THEMES == true ]] && echo ON || echo OFF)" >&3
+    printf " 8) [%-3s] btop                  16) [%-3s] AnyDesk\n"           \
+      "$([[ $INSTALL_BTOP    == true ]] && echo ON || echo OFF)"             \
+      "$([[ $INSTALL_ANYDESK == true ]] && echo ON || echo OFF)"     >&3
+    printf "\n" >&3
+    printf " r) Run setup   a) All on   n) All off   q) Quit\n" >&3
+    printf "===============================================\n" >&3
+    read -rp "Choose [1-16/r/a/n/q]: " choice <&4
     case "$choice" in
       [1-9]|1[0-6])
         case "$choice" in
-          1) name=INSTALL_MULTIMEDIA ;; 2) name=INSTALL_NVIDIA ;; 3) name=INSTALL_ZSH ;;
-          4) name=INSTALL_FRESH ;; 5) name=INSTALL_BRAVE ;; 6) name=INSTALL_VSCODE ;;
-          7) name=INSTALL_GHOSTTY ;; 8) name=INSTALL_BTOP ;; 9) name=INSTALL_CLI_UTILS ;;
-          10) name=INSTALL_VLC ;; 11) name=INSTALL_STEAM_DISCORD ;; 12) name=INSTALL_OBSIDIAN ;;
-          13) name=INSTALL_KVM ;; 14) name=INSTALL_GRUB_THEME ;; 15) name=INSTALL_DESKTOP_THEMES ;;
-          16) name=INSTALL_ANYDESK ;;
+          1)  name=INSTALL_MULTIMEDIA ;;  2)  name=INSTALL_NVIDIA ;;
+          3)  name=INSTALL_ZSH ;;         4)  name=INSTALL_FRESH ;;
+          5)  name=INSTALL_BRAVE ;;       6)  name=INSTALL_VSCODE ;;
+          7)  name=INSTALL_GHOSTTY ;;     8)  name=INSTALL_BTOP ;;
+          9)  name=INSTALL_CLI_UTILS ;;   10) name=INSTALL_VLC ;;
+          11) name=INSTALL_DISCORD ;;     12) name=INSTALL_OBSIDIAN ;;
+          13) name=INSTALL_KVM ;;         14) name=INSTALL_GRUB_THEME ;;
+          15) name=INSTALL_DESKTOP_THEMES ;; 16) name=INSTALL_ANYDESK ;;
         esac
         if [ "${!name}" = true ]; then printf -v "$name" false; else printf -v "$name" true; fi
         ;;
-      a|A) for name in $FEATURE_FLAGS; do printf -v "$name" true; done ;;
+      a|A) for name in $FEATURE_FLAGS; do printf -v "$name" true;  done ;;
       n|N) for name in $FEATURE_FLAGS; do printf -v "$name" false; done ;;
-      r|R) return 0 ;;
-      q|Q) CANCELLED=1; exit 0 ;;
+      r|R) exec 3>&- 4<&-; return 0 ;;
+      q|Q) exec 3>&- 4<&-; CANCELLED=1; exit 0 ;;
+      *)   printf "  Invalid choice '%s' — use a number, r, a, n, or q.\n" "$choice" >&3 ;;
     esac
   done
 }
+
+# Show the interactive menu BEFORE redirecting stdout/stderr to the log file,
+# so that the menu is always visible on the terminal regardless of redirection.
+if [ -t 0 ] && [ -t 1 ]; then
+  show_menu
+fi
 
 LOG_FILE="/var/log/fedora-workstation-setup.log"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fedora-setup.XXXXXX")
 chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$TMP_DIR"
 exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=== System Setup & Catppuccin GRUB Theme Installer for Fedora ==="
+echo "Target User: $TARGET_USER"
+echo "Target Home: $TARGET_HOME"
+echo "============================================="
 
 start_step() {
   CURRENT_STEP="$1"
@@ -144,14 +175,6 @@ finish() {
 }
 trap 'on_error "$LINENO"' ERR
 trap finish EXIT
-
-if [ -t 0 ] && [ -t 1 ]; then
-  show_menu
-fi
-
-echo "Target User: $TARGET_USER"
-echo "Target Home: $TARGET_HOME"
-echo "============================================="
 
 # ----------------------------------------------------------------------
 # 0. Ensure system is fully up-to-date before installing anything
@@ -202,7 +225,7 @@ echo "RPM Fusion repositories enabled and multimedia codecs installed."
 echo "============================================="
 
 # ----------------------------------------------------------------------
-# 2. Install Nvidia Drivers & 32-bit Libraries (Crucial for Steam)
+# 2. Install Nvidia Drivers & 32-bit Libraries
 # ----------------------------------------------------------------------
 start_step "Install Nvidia drivers and 32-bit libraries"
 if [ "$INSTALL_NVIDIA" = true ]; then
@@ -213,7 +236,7 @@ STEP_PASS=$((STEP_PASS + 1))
 else
   skip_step "Nvidia drivers"
 fi
-echo "Nvidia drivers and Steam graphics libraries installation complete."
+echo "Nvidia drivers installation complete."
 echo "============================================="
 
 # ----------------------------------------------------------------------
@@ -400,7 +423,7 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# 8a. Install General CLI Utilities
+# 9. Install General CLI Utilities
 # ----------------------------------------------------------------------
 start_step "Install general CLI utilities"
 if [ "$INSTALL_CLI_UTILS" = true ]; then
@@ -413,7 +436,7 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# 9. Install VLC
+# 10. Install VLC
 # ----------------------------------------------------------------------
 start_step "Install VLC"
 if [ "$INSTALL_VLC" = true ]; then
@@ -426,25 +449,20 @@ else
 fi
 
 # ----------------------------------------------------------------------
-# 10. Install Steam and Discord
+# 11. Install Discord
 # ----------------------------------------------------------------------
-start_step "Install Steam and Discord"
-if [ "$INSTALL_STEAM_DISCORD" = true ]; then
-dnf install -y steam discord
-echo "Steam and Discord installed successfully."
-
-# Note on Steam WebHelper blank screen issues on Wayland / hybrid graphics
-echo "TIP: If Steam launches with a black or empty screen, run:"
-echo "     steam -cef-disable-gpu"
-echo "     Or delete the browser cache by running: rm -rf ~/.local/share/Steam/config/htmlcache/*"
+start_step "Install Discord"
+if [ "$INSTALL_DISCORD" = true ]; then
+dnf install -y discord
+echo "Discord installed successfully."
 echo "============================================="
 STEP_PASS=$((STEP_PASS + 1))
 else
-  skip_step "Steam and Discord"
+  skip_step "Discord"
 fi
 
 # ----------------------------------------------------------------------
-# 11. Install Obsidian (AppImage)
+# 12. Install Obsidian (AppImage)
 # ----------------------------------------------------------------------
 start_step "Install Obsidian AppImage"
 if [ "$INSTALL_OBSIDIAN" = true ]; then
@@ -453,32 +471,34 @@ dnf install -y fuse wget curl
 # Create installation directory
 mkdir -p /opt/obsidian/
 
-# Fetch latest AppImage URL from GitHub API
-LATEST_URL=$(curl -s https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest \
-  | grep "browser_download_url.*AppImage" \
-  | tail -n 1 \
+# Fetch the latest x86_64 AppImage URL from GitHub API.
+# /releases/latest sometimes points to a mobile-only release (APK/dmg),
+# so we scan the last 10 releases to find the first x86_64 AppImage.
+LATEST_URL=$(curl -s "https://api.github.com/repos/obsidianmd/obsidian-releases/releases?per_page=10" \
+  | grep '"browser_download_url"' \
+  | grep '\.AppImage"' \
+  | grep -iv 'arm' \
+  | head -n 1 \
   | cut -d '"' -f 4)
 
 if [ -z "$LATEST_URL" ]; then
-  echo "Could not determine the latest Obsidian AppImage download URL." >&2
-  exit 1
-fi
+  log_warn "Could not find an x86_64 Obsidian AppImage in the last 10 releases. Skipping Obsidian install."
+else
+  echo "Downloading Obsidian AppImage from: $LATEST_URL"
+  wget -O /opt/obsidian/Obsidian.AppImage "$LATEST_URL"
+  chmod +x /opt/obsidian/Obsidian.AppImage
 
-echo "Downloading Obsidian AppImage from: $LATEST_URL"
-wget -O /opt/obsidian/Obsidian.AppImage "$LATEST_URL"
-chmod +x /opt/obsidian/Obsidian.AppImage
+  # Create a symlink to /usr/local/bin/obsidian
+  ln -sf /opt/obsidian/Obsidian.AppImage /usr/local/bin/obsidian
 
-# Create a symlink to /usr/local/bin/obsidian
-ln -sf /opt/obsidian/Obsidian.AppImage /usr/local/bin/obsidian
+  # Download Obsidian logo for desktop entry
+  echo "Downloading Obsidian logo..."
+  mkdir -p /usr/share/icons/hicolor/512x512/apps/
+  wget -O /usr/share/icons/hicolor/512x512/apps/obsidian.png https://obsidian.md/images/logo.png || log_warn "Could not download the Obsidian icon."
 
-# Download Obsidian logo for desktop entry
-echo "Downloading Obsidian logo..."
-mkdir -p /usr/share/icons/hicolor/512x512/apps/
-wget -O /usr/share/icons/hicolor/512x512/apps/obsidian.png https://obsidian.md/images/logo.png || log_warn "Could not download the Obsidian icon."
-
-# Create Desktop Entry
-echo "Creating desktop entry for Obsidian..."
-cat <<EOF > /usr/share/applications/obsidian.desktop
+  # Create Desktop Entry
+  echo "Creating desktop entry for Obsidian..."
+  cat <<EOF > /usr/share/applications/obsidian.desktop
 [Desktop Entry]
 Name=Obsidian
 Comment=Obsidian knowledge base
@@ -491,12 +511,14 @@ MimeType=x-scheme-handler/obsidian;
 StartupWMClass=Obsidian
 EOF
 
-echo "Obsidian AppImage installed successfully."
+  echo "Obsidian AppImage installed successfully."
+fi  # end LATEST_URL check
+
 echo "============================================="
 STEP_PASS=$((STEP_PASS + 1))
 else
   skip_step "Obsidian"
-fi
+fi  # end INSTALL_OBSIDIAN
 
 # ----------------------------------------------------------------------
 # 13. Install and Configure Virtualization (KVM/QEMU/Libvirt)
@@ -556,13 +578,13 @@ else
         TMPXML="$TMP_DIR/vm-memory.xml"
         virsh -c qemu:///system dumpxml "$VM_NAME" > "$TMPXML"
         # Insert memoryBacking after the closing </vcpu> or </currentMemory> tag
-        sed -i '/<\/currentMemory>/a \  <memoryBacking>\n    <source type="memfd"/>\n    <access mode="shared"/>\n  </memoryBacking>' "$TMPXML"
+        sed -i '/<\/currentMemory>/a \  <memoryBacking>\n    <source type="memfd"\/>\n    <access mode="shared"\/>\n  <\/memoryBacking>' "$TMPXML"
         virsh -c qemu:///system define "$TMPXML"
       }
     else
       TMPXML="$TMP_DIR/vm-memory.xml"
       virsh -c qemu:///system dumpxml "$VM_NAME" > "$TMPXML"
-      sed -i '/<\/currentMemory>/a \  <memoryBacking>\n    <source type="memfd"/>\n    <access mode="shared"/>\n  </memoryBacking>' "$TMPXML"
+      sed -i '/<\/currentMemory>/a \  <memoryBacking>\n    <source type="memfd"\/>\n    <access mode="shared"\/>\n  <\/memoryBacking>' "$TMPXML"
       virsh -c qemu:///system define "$TMPXML"
     fi
     echo "  → Shared memory backing added."
@@ -695,6 +717,9 @@ dnf install -y sassc unzip wget tar
 echo "Installing Catppuccin KDE theme..."
 KDE_REPO_DIR="$TMP_DIR/catppuccin-kde"
 sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/catppuccin/kde "$KDE_REPO_DIR"
+# Strip broken Pling KNS dependency (Aurorae is already installed locally by install.sh)
+sudo -u "$TARGET_USER" sed -i '/X-KPackage-Dependencies/d' "$KDE_REPO_DIR"/generated/look-and-feel/*/*/metadata.desktop
+sudo -u "$TARGET_USER" sed -i '/kns:\/\/aurorae\.knsrc/d' "$KDE_REPO_DIR"/generated/look-and-feel/*/*/metadata.json
 sudo -u "$TARGET_USER" bash -c "cd '$KDE_REPO_DIR' && chmod +x install.sh && ./install.sh 1 4 1 auto" || log_warn "Catppuccin KDE theme installation failed."
 
 # 15b. Konsole Color Schemes
@@ -708,11 +733,13 @@ sudo -u "$TARGET_USER" cp "$KONSOLE_REPO_DIR"/themes/*.colorscheme "$KONSOLE_DIR
 # 15c. GTK Theme
 echo "Installing Catppuccin GTK theme..."
 GTK_THEME_DIR="$TARGET_HOME/.themes"
-sudo -u "$TARGET_USER" mkdir -p "$GTK_THEME_DIR"
+LOCAL_GTK_THEME_DIR="$TARGET_HOME/.local/share/themes"
+sudo -u "$TARGET_USER" mkdir -p "$GTK_THEME_DIR" "$LOCAL_GTK_THEME_DIR"
 GTK_REPO_DIR="$TMP_DIR/Catppuccin-GTK-Theme"
 sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/Fausto-Korpsvart/Catppuccin-GTK-Theme.git "$GTK_REPO_DIR"
 # Run the installer as TARGET_USER in batch mode
 sudo -u "$TARGET_USER" env BATCH_MODE=true bash "$GTK_REPO_DIR/themes/install.sh" -a mauve -m dark || log_warn "Catppuccin GTK theme installation failed."
+sudo -u "$TARGET_USER" cp -r "$GTK_THEME_DIR"/Catppuccin-Mauve-Dark* "$LOCAL_GTK_THEME_DIR"/ 2>/dev/null || true
 
 # 15d. Cursor compatibility symlink
 echo "Creating cursor compatibility symlink..."
