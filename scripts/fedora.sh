@@ -307,6 +307,8 @@ fi
 # ----------------------------------------------------------------------
 start_step "Install Fresh shell configuration manager"
 if [ "$INSTALL_FRESH" = true ]; then
+# Ensure Perl module File::Find is installed (required by Fresh)
+dnf install -y perl-File-Find
 if [ ! -d "$TARGET_HOME/.fresh" ]; then
   curl -fsSL https://get.freshshell.com \
     | sudo -u "$TARGET_USER" bash -s || log_warn "Fresh installation failed; continuing without it."
@@ -491,10 +493,20 @@ else
   # Create a symlink to /usr/local/bin/obsidian
   ln -sf /opt/obsidian/Obsidian.AppImage /usr/local/bin/obsidian
 
-  # Download Obsidian logo for desktop entry
-  echo "Downloading Obsidian logo..."
+  # Setup Obsidian logo for desktop entry
+  echo "Setting up Obsidian logo..."
   mkdir -p /usr/share/icons/hicolor/512x512/apps/
-  wget -O /usr/share/icons/hicolor/512x512/apps/obsidian.png https://obsidian.md/images/logo.png || log_warn "Could not download the Obsidian icon."
+  (
+    ICON_TMP=$(mktemp -d)
+    cd "$ICON_TMP"
+    if /opt/obsidian/Obsidian.AppImage --appimage-extract "usr/share/icons/hicolor/512x512/apps/obsidian.png" &>/dev/null && [ -f squashfs-root/usr/share/icons/hicolor/512x512/apps/obsidian.png ]; then
+      cp squashfs-root/usr/share/icons/hicolor/512x512/apps/obsidian.png /usr/share/icons/hicolor/512x512/apps/obsidian.png
+    else
+      wget -qO /usr/share/icons/hicolor/512x512/apps/obsidian.png "https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/obsidian.png" || log_warn "Could not download the Obsidian icon."
+    fi
+    cd /
+    rm -rf "$ICON_TMP"
+  )
 
   # Create Desktop Entry
   echo "Creating desktop entry for Obsidian..."
@@ -557,8 +569,8 @@ VM_NAME="Kali-Linux"
 
 # Check if the VM exists
 if ! virsh -c qemu:///system dominfo "$VM_NAME" &>/dev/null; then
-  log_warn "VM '$VM_NAME' not found. Skipping shared folder attachment."
-  echo "  Create the VM first, then re-run this script."
+  echo "  [INFO] VM '$VM_NAME' not found yet. Skipping shared folder attachment."
+  echo "  Create the VM first (see Kali_Setup_in_KVM.md), then re-run this step."
   echo "============================================="
 else
   # Never stop or force-stop a running guest automatically.
