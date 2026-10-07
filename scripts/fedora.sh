@@ -57,6 +57,10 @@ INSTALL_GRUB_THEME=true
 INSTALL_DESKTOP_THEMES=true
 INSTALL_ANYDESK=true
 
+# ── Per-step configuration ────────────────────────────────────────────────────
+# Name of the KVM guest to attach the virtiofs shared folder to (Step 13a).
+KVM_GUEST_NAME="Kali-Linux"
+
 FEATURE_FLAGS="INSTALL_MULTIMEDIA INSTALL_NVIDIA INSTALL_ZSH INSTALL_FRESH INSTALL_BRAVE INSTALL_VSCODE INSTALL_GHOSTTY INSTALL_BTOP INSTALL_CLI_UTILS INSTALL_VLC INSTALL_DISCORD INSTALL_OBSIDIAN INSTALL_KVM INSTALL_GRUB_THEME INSTALL_DESKTOP_THEMES INSTALL_ANYDESK"
 
 show_menu() {
@@ -127,7 +131,7 @@ fi
 
 LOG_FILE="/var/log/fedora-workstation-setup.log"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/fedora-setup.XXXXXX")
-chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$TMP_DIR"
+chmod 700 "$TMP_DIR"   # Keep root-owned; user-writable dirs risk symlink attacks
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=== System Setup & Catppuccin GRUB Theme Installer for Fedora ==="
@@ -216,12 +220,11 @@ dnf install -y gstreamer1-plugin-openh264 mozilla-openh264 || log_warn "OpenH264
 
 # Update multimedia packages
 dnf upgrade -y @multimedia || log_warn "Multimedia package update failed."
+echo "RPM Fusion repositories enabled and multimedia codecs installed."
 STEP_PASS=$((STEP_PASS + 1))
 else
   skip_step "Multimedia codecs"
 fi
-
-echo "RPM Fusion repositories enabled and multimedia codecs installed."
 echo "============================================="
 
 # ----------------------------------------------------------------------
@@ -232,11 +235,11 @@ if [ "$INSTALL_NVIDIA" = true ]; then
 # Enable the nvidia driver repo (DNF5 syntax)
 dnf config-manager setopt rpmfusion-nonfree-nvidia-driver.enabled=1 || log_warn "Could not enable the RPM Fusion Nvidia repository."
 dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda xorg-x11-drv-nvidia-libs.i686 egl-wayland || log_warn "Nvidia packages could not be installed; check hardware and repository setup."
+echo "Nvidia drivers installation complete."
 STEP_PASS=$((STEP_PASS + 1))
 else
   skip_step "Nvidia drivers"
 fi
-echo "Nvidia drivers installation complete."
 echo "============================================="
 
 # ----------------------------------------------------------------------
@@ -244,7 +247,22 @@ echo "============================================="
 # ----------------------------------------------------------------------
 start_step "Install and configure Zsh"
 if [ "$INSTALL_ZSH" = true ]; then
-dnf install -y zsh git curl
+dnf install -y zsh git curl fzf eza zoxide fontconfig perl
+
+# Install Nerd Fonts (MesloLGS NF for icons support in prompt & eza)
+echo "Installing MesloLGS NF Nerd Fonts for $TARGET_USER..."
+FONTS_DIR="$TARGET_HOME/.local/share/fonts"
+sudo -u "$TARGET_USER" mkdir -p "$FONTS_DIR"
+MESLO_URL="https://github.com/romkatv/powerlevel10k-media/raw/master"
+for font_file in "MesloLGS NF Regular.ttf" "MesloLGS NF Bold.ttf" "MesloLGS NF Italic.ttf" "MesloLGS NF Bold Italic.ttf"; do
+  if [ ! -f "$FONTS_DIR/$font_file" ]; then
+    echo "Downloading font: $font_file..."
+    curl -fsSL -o "$FONTS_DIR/$font_file" "$MESLO_URL/${font_file// /%20}" || log_warn "Could not download $font_file"
+    chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$FONTS_DIR/$font_file" 2>/dev/null || true
+  fi
+done
+fc-cache -f "$FONTS_DIR"                                         # system cache (root)
+sudo -u "$TARGET_USER" fc-cache -f "$FONTS_DIR" || log_warn "Could not refresh user font cache."
 
 # Install Oh My Zsh if not already present
 OMZ_DIR="$TARGET_HOME/.oh-my-zsh"
@@ -256,7 +274,18 @@ else
   echo "Oh My Zsh is already installed for $TARGET_USER."
 fi
 
-# Install plugins (autosuggestions & syntax-highlighting)
+# Install Powerlevel10k theme
+THEMES_DIR="$OMZ_DIR/custom/themes"
+mkdir -p "$THEMES_DIR"
+chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$THEMES_DIR"
+
+P10K_DIR="$THEMES_DIR/powerlevel10k"
+if [ ! -d "$P10K_DIR" ]; then
+  echo "Installing Powerlevel10k theme..."
+  sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "$P10K_DIR"
+fi
+
+# Install plugins (autosuggestions, syntax-highlighting, fzf-tab, zsh-completions)
 PLUGINS_DIR="$OMZ_DIR/custom/plugins"
 mkdir -p "$PLUGINS_DIR"
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$PLUGINS_DIR"
@@ -264,27 +293,103 @@ chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$PLUGINS_DIR"
 SUGGESTIONS_DIR="$PLUGINS_DIR/zsh-autosuggestions"
 if [ ! -d "$SUGGESTIONS_DIR" ]; then
   echo "Installing zsh-autosuggestions..."
-  sudo -u "$TARGET_USER" git clone https://github.com/zsh-users/zsh-autosuggestions "$SUGGESTIONS_DIR"
+  sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "$SUGGESTIONS_DIR"
 fi
 
 HIGHLIGHT_DIR="$PLUGINS_DIR/zsh-syntax-highlighting"
 if [ ! -d "$HIGHLIGHT_DIR" ]; then
   echo "Installing zsh-syntax-highlighting..."
-  sudo -u "$TARGET_USER" git clone https://github.com/zsh-users/zsh-syntax-highlighting.git "$HIGHLIGHT_DIR"
+  sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting.git "$HIGHLIGHT_DIR"
 fi
 
-# Enable plugins in .zshrc
+FZF_TAB_DIR="$PLUGINS_DIR/fzf-tab"
+if [ ! -d "$FZF_TAB_DIR" ]; then
+  echo "Installing fzf-tab..."
+  sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/Aloxaf/fzf-tab "$FZF_TAB_DIR"
+fi
+
+COMPLETIONS_DIR="$PLUGINS_DIR/zsh-completions"
+if [ ! -d "$COMPLETIONS_DIR" ]; then
+  echo "Installing zsh-completions..."
+  sudo -u "$TARGET_USER" git clone --depth=1 https://github.com/zsh-users/zsh-completions "$COMPLETIONS_DIR"
+fi
+
+# Configure custom icons, eza aliases, zoxide and fzf-tab previews
+ICONS_ZSH="$OMZ_DIR/custom/icons-and-tools.zsh"
+cat <<'EOF' > "$ICONS_ZSH"
+# Icons & Modern CLI Aliases (eza)
+if command -v eza &>/dev/null; then
+  alias ls='eza --icons=auto'
+  alias l='eza -lh --icons=auto'
+  alias ll='eza -lha --icons=auto --git'
+  alias la='eza -a --icons=auto'
+  alias lt='eza --tree --level=2 --icons=auto'
+fi
+
+# Zoxide (smart cd directory jumper)
+if command -v zoxide &>/dev/null; then
+  eval "$(zoxide init zsh)"
+fi
+
+# fzf-tab configuration: colors, previews & icons
+zstyle ':completion:*:descriptions' format '[%d]'
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+zstyle ':fzf-tab:complete:cd:*' fzf-preview 'eza -1 --color=always --icons $realpath'
+zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --color=always --icons $realpath'
+zstyle ':fzf-tab:*' switch-group '<' '>'
+EOF
+chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$ICONS_ZSH"
+
+# Configure .zshrc (create if missing — OMZ may not have run yet on re-runs)
 ZSHRC="$TARGET_HOME/.zshrc"
-if [ -f "$ZSHRC" ]; then
-  echo "Configuring plugins in $ZSHRC..."
-  if grep -q '^plugins=(git)' "$ZSHRC"; then
-    sed -i 's/^plugins=(git)/plugins=(git zsh-autosuggestions zsh-syntax-highlighting)/' "$ZSHRC"
-    echo "Added plugins to $ZSHRC."
-  elif ! grep -q 'zsh-autosuggestions' "$ZSHRC"; then
-    sed -i 's/plugins=(\(.*\))/plugins=(\1 zsh-autosuggestions zsh-syntax-highlighting)/' "$ZSHRC"
-    echo "Appended plugins to custom list in $ZSHRC."
-  else
-    echo "Plugins already configured in $ZSHRC."
+[ -f "$ZSHRC" ] || sudo -u "$TARGET_USER" touch "$ZSHRC"
+
+echo "Configuring $ZSHRC..."
+
+# Powerlevel10k instant prompt at the top
+if ! grep -q "p10k-instant-prompt" "$ZSHRC"; then
+  TMP_ZSHRC=$(mktemp)
+  # Write p10k header first
+  cat <<'EOF' > "$TMP_ZSHRC"
+# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+EOF
+  cat "$ZSHRC" >> "$TMP_ZSHRC"
+  # Use install(1) so the file is atomically placed with correct ownership
+  install -m 644 -o "$TARGET_USER" -g "$(id -gn "$TARGET_USER")" "$TMP_ZSHRC" "$ZSHRC"
+  rm -f "$TMP_ZSHRC"
+fi
+
+# Set ZSH_THEME to powerlevel10k
+if grep -q '^ZSH_THEME=' "$ZSHRC"; then
+  sed -i 's/^ZSH_THEME=.*/ZSH_THEME="powerlevel10k\/powerlevel10k"/' "$ZSHRC"
+fi
+
+# Update plugins list
+perl -0777 -i -pe 's/plugins=\([^)]*\)/plugins=(\n  git\n  sudo\n  extract\n  colored-man-pages\n  zsh-completions\n  fzf-tab\n  zsh-autosuggestions\n  zsh-syntax-highlighting\n)/s' "$ZSHRC"
+
+# Source p10k.zsh at bottom if not already present
+if ! grep -q 'p10k.zsh' "$ZSHRC"; then
+  cat <<'EOF' >> "$ZSHRC"
+
+# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+EOF
+fi
+
+chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$ZSHRC"
+echo "Updated $ZSHRC with Powerlevel10k, plugins, and instant prompt."
+
+# Configure Ghostty font if Ghostty config exists
+GHOSTTY_CONF="$TARGET_HOME/.config/ghostty/config"
+if [ -f "$GHOSTTY_CONF" ]; then
+  if ! grep -q "^font-family =" "$GHOSTTY_CONF"; then
+    echo 'font-family = "MesloLGS NF"' >> "$GHOSTTY_CONF"
+    echo 'font-size = 12' >> "$GHOSTTY_CONF"
+    chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$GHOSTTY_CONF"
   fi
 fi
 
@@ -310,8 +415,15 @@ if [ "$INSTALL_FRESH" = true ]; then
 # Ensure Perl module File::Find is installed (required by Fresh)
 dnf install -y perl-File-Find
 if [ ! -d "$TARGET_HOME/.fresh" ]; then
-  curl -fsSL https://get.freshshell.com \
-    | sudo -u "$TARGET_USER" bash -s || log_warn "Fresh installation failed; continuing without it."
+  # Download to a temp file rather than piping curl directly to bash (S2)
+  FRESH_INSTALLER="$TMP_DIR/fresh-install.sh"
+  if curl -fsSL -o "$FRESH_INSTALLER" https://get.freshshell.com && [ -s "$FRESH_INSTALLER" ]; then
+    chmod +x "$FRESH_INSTALLER"
+    sudo -u "$TARGET_USER" bash "$FRESH_INSTALLER" || log_warn "Fresh installation failed; continuing without it."
+  else
+    log_warn "Could not download Fresh installer; skipping."
+  fi
+  rm -f "$FRESH_INSTALLER"
 else
   echo "Fresh is already installed."
 fi
@@ -387,8 +499,6 @@ gpgcheck=1
 gpgkey=https://packages.microsoft.com/keys/microsoft.asc
 EOF
 
-# DNF returns 100 when updates are available; that is not an error here.
-dnf check-update || [ "$?" -eq 100 ]
 dnf install -y code
 echo "VS Code installed successfully."
 echo "============================================="
@@ -486,25 +596,39 @@ LATEST_URL=$(curl -s "https://api.github.com/repos/obsidianmd/obsidian-releases/
 if [ -z "$LATEST_URL" ]; then
   log_warn "Could not find an x86_64 Obsidian AppImage in the last 10 releases. Skipping Obsidian install."
 else
-  echo "Downloading Obsidian AppImage from: $LATEST_URL"
-  wget -O /opt/obsidian/Obsidian.AppImage "$LATEST_URL"
-  chmod +x /opt/obsidian/Obsidian.AppImage
+  # R3: derive the version tag from the URL; skip re-download if already current
+  LATEST_VER=$(basename "$(dirname "$LATEST_URL")")
+  INSTALLED_VER=""
+  [ -f /opt/obsidian/version.txt ] && INSTALLED_VER=$(cat /opt/obsidian/version.txt)
+
+  if [ "$INSTALLED_VER" = "$LATEST_VER" ]; then
+    echo "Obsidian $LATEST_VER is already installed; skipping download."
+  else
+    echo "Downloading Obsidian $LATEST_VER AppImage from: $LATEST_URL"
+    wget -O /opt/obsidian/Obsidian.AppImage "$LATEST_URL"
+    chmod +x /opt/obsidian/Obsidian.AppImage
+    echo "$LATEST_VER" > /opt/obsidian/version.txt
+  fi
 
   # Create a symlink to /usr/local/bin/obsidian
   ln -sf /opt/obsidian/Obsidian.AppImage /usr/local/bin/obsidian
 
-  # Setup Obsidian logo for desktop entry
+  # S3: extract icon as TARGET_USER — running AppImage as root executes arbitrary code with root privileges
   echo "Setting up Obsidian logo..."
   mkdir -p /usr/share/icons/hicolor/512x512/apps/
   (
     ICON_TMP=$(mktemp -d)
-    cd "$ICON_TMP"
-    if /opt/obsidian/Obsidian.AppImage --appimage-extract "usr/share/icons/hicolor/512x512/apps/obsidian.png" &>/dev/null && [ -f squashfs-root/usr/share/icons/hicolor/512x512/apps/obsidian.png ]; then
-      cp squashfs-root/usr/share/icons/hicolor/512x512/apps/obsidian.png /usr/share/icons/hicolor/512x512/apps/obsidian.png
+    chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$ICON_TMP"
+    if sudo -u "$TARGET_USER" sh -c \
+        "cd '$ICON_TMP' && /opt/obsidian/Obsidian.AppImage --appimage-extract 'usr/share/icons/hicolor/512x512/apps/obsidian.png'" &>/dev/null \
+        && [ -f "$ICON_TMP/squashfs-root/usr/share/icons/hicolor/512x512/apps/obsidian.png" ]; then
+      cp "$ICON_TMP/squashfs-root/usr/share/icons/hicolor/512x512/apps/obsidian.png" \
+         /usr/share/icons/hicolor/512x512/apps/obsidian.png
     else
-      wget -qO /usr/share/icons/hicolor/512x512/apps/obsidian.png "https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/obsidian.png" || log_warn "Could not download the Obsidian icon."
+      wget -qO /usr/share/icons/hicolor/512x512/apps/obsidian.png \
+        "https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/obsidian.png" \
+        || log_warn "Could not download the Obsidian icon."
     fi
-    cd /
     rm -rf "$ICON_TMP"
   )
 
@@ -565,13 +689,13 @@ echo "  → Host folder created at: $SHARE_DIR"
 # Install virtiofsd (host-side daemon required for virtio-fs)
 dnf install -y virtiofsd
 
-VM_NAME="Kali-Linux"
+# KVM_GUEST_NAME is set at the top of the script
+VM_NAME="$KVM_GUEST_NAME"
 
 # Check if the VM exists
 if ! virsh -c qemu:///system dominfo "$VM_NAME" &>/dev/null; then
   echo "  [INFO] VM '$VM_NAME' not found yet. Skipping shared folder attachment."
   echo "  Create the VM first (see Kali_Setup_in_KVM.md), then re-run this step."
-  echo "============================================="
 else
   # Never stop or force-stop a running guest automatically.
   VM_STATE=$(virsh -c qemu:///system domstate "$VM_NAME" | head -1)
@@ -759,8 +883,8 @@ if [ ! -e "$TARGET_HOME/.icons" ]; then
   sudo -u "$TARGET_USER" ln -s "$TARGET_HOME/.local/share/icons" "$TARGET_HOME/.icons"
 fi
 
-# 15e. Ghostty Theme
-echo "Configuring Catppuccin theme for Ghostty..."
+# 15e. Ghostty Theme & Font
+echo "Configuring Catppuccin theme and font for Ghostty..."
 GHOSTTY_CONFIG_DIR="$TARGET_HOME/.config/ghostty"
 sudo -u "$TARGET_USER" mkdir -p "$GHOSTTY_CONFIG_DIR"
 GHOSTTY_CONFIG_FILE="$GHOSTTY_CONFIG_DIR/config"
@@ -771,6 +895,10 @@ if ! grep -q "^theme =" "$GHOSTTY_CONFIG_FILE"; then
   sudo -u "$TARGET_USER" sh -c "echo 'theme = Catppuccin Mocha' >> '$GHOSTTY_CONFIG_FILE'"
 else
   sudo -u "$TARGET_USER" sed -i 's/^theme =.*/theme = Catppuccin Mocha/' "$GHOSTTY_CONFIG_FILE"
+fi
+if ! grep -q "^font-family =" "$GHOSTTY_CONFIG_FILE"; then
+  sudo -u "$TARGET_USER" sh -c "echo 'font-family = \"MesloLGS NF\"' >> '$GHOSTTY_CONFIG_FILE'"
+  sudo -u "$TARGET_USER" sh -c "echo 'font-size = 12' >> '$GHOSTTY_CONFIG_FILE'"
 fi
 
 echo "Catppuccin KDE, GTK, Konsole, and Ghostty themes installed/configured."
