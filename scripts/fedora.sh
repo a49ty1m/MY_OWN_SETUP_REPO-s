@@ -154,6 +154,58 @@ skip_step() {
   STEP_SKIP=$((STEP_SKIP + 1))
   echo "[SKIP] $1"
 }
+
+open_in_new_tab() {
+  local title="${1:-Tool Setup}"
+  local command_to_run="$2"
+
+  echo "  [→] Spawning interactive setup for '$title' in a new terminal tab..."
+
+  local uid
+  uid=$(id -u "$TARGET_USER")
+  local runtime_dir="/run/user/$uid"
+
+  # If not in a graphical session, inform the user and skip opening GUI tab
+  if [ ! -d "$runtime_dir" ] || { [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${DISPLAY:-}" ]; }; then
+    echo "  [INFO] No active GUI session detected. Run manually when ready: $command_to_run"
+    return 0
+  fi
+
+  # Create a wrapper script that runs the command and keeps the tab open when finished
+  local wrapper
+  wrapper=$(mktemp /tmp/setup-tab-XXXXXX.sh)
+  cat <<EOF > "$wrapper"
+#!/usr/bin/env bash
+printf "\033[1;36m======================================================================\033[0m\n"
+printf "\033[1;33m       $title - Post-Installation Setup\033[0m\n"
+printf "\033[1;36m======================================================================\033[0m\n\n"
+$command_to_run
+printf "\n\033[1;32m[✔] Setup finished.\033[0m Press \033[1;37mEnter\033[0m to close this tab..."
+read -r
+rm -f "\$0"
+EOF
+  chmod +x "$wrapper"
+  chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$wrapper"
+
+  local env_args=(
+    WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+    DISPLAY="${DISPLAY:-:0}"
+    XDG_RUNTIME_DIR="$runtime_dir"
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+  )
+
+  if command -v ghostty &>/dev/null; then
+    sudo -u "$TARGET_USER" env "${env_args[@]}" ghostty -e "$wrapper" &
+  elif command -v konsole &>/dev/null; then
+    sudo -u "$TARGET_USER" env "${env_args[@]}" konsole --new-tab -e "$wrapper" &
+  elif command -v ptyxis &>/dev/null; then
+    sudo -u "$TARGET_USER" env "${env_args[@]}" ptyxis --new-window -- "$wrapper" &
+  elif command -v gnome-terminal &>/dev/null; then
+    sudo -u "$TARGET_USER" env "${env_args[@]}" gnome-terminal --tab -- "$wrapper" &
+  else
+    echo "  [INFO] Run manually: $command_to_run"
+  fi
+}
 on_error() {
   local status=$? line=${1:-unknown}
   trap - ERR
@@ -351,10 +403,10 @@ if ! grep -q "p10k-instant-prompt" "$ZSHRC"; then
   TMP_ZSHRC=$(mktemp)
   # Write p10k header first
   cat <<'EOF' > "$TMP_ZSHRC"
-# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
+# Enable Powerlevel10k instant prompt (disabled to allow fastfetch on startup)
+# if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+#   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+# fi
 
 EOF
   cat "$ZSHRC" >> "$TMP_ZSHRC"
@@ -401,6 +453,10 @@ if [ "$CURRENT_SHELL" != "$(which zsh)" ]; then
 else
   echo "Default shell is already Zsh."
 fi
+
+# Launch Powerlevel10k interactive configuration wizard in a new tab
+open_in_new_tab "Powerlevel10k Prompt Wizard" "zsh -ic 'p10k configure'"
+
 echo "============================================="
 STEP_PASS=$((STEP_PASS + 1))
 else
@@ -537,10 +593,348 @@ fi
 # ----------------------------------------------------------------------
 # 9. Install General CLI Utilities
 # ----------------------------------------------------------------------
-start_step "Install general CLI utilities"
+start_step "Install general CLI utilities and Fastfetch"
 if [ "$INSTALL_CLI_UTILS" = true ]; then
-dnf install -y tldr ncdu calibre gh gcc-c++ fzf duf eza zoxide mycli git-lfs
-echo "CLI utilities installed successfully."
+dnf install -y tldr ncdu calibre gh gcc-c++ fzf duf eza zoxide mycli git-lfs fastfetch
+
+# ── Configure Fastfetch Custom Preset ─────────────────────────────────────────
+echo "Configuring Fastfetch custom preset and adaptive layout..."
+FASTFETCH_CONF_DIR="$TARGET_HOME/.config/fastfetch"
+sudo -u "$TARGET_USER" mkdir -p "$FASTFETCH_CONF_DIR"
+
+cat <<\EOF > "$FASTFETCH_CONF_DIR/config.jsonc"
+// Based on #1576
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    "logo": {
+        "padding": {
+            "right": 1
+        }
+    },
+    "display": {
+        "color": {
+            "keys": "blue"
+        },
+        "separator": "",
+        // Constants are reusable strings referenced by {$1}, {$2}, etc.
+        // These contain ANSI escape codes for cursor positioning
+        "constants": [
+            "────────────────────────────────────────", // {$1} - horizontal line for inner borders
+            "\u001b[41D",                                     // {$2} - move cursor left 47 columns
+            "\u001b[41C",                                     // {$3} - move cursor right 47 columns
+            "\u001b[40C",                                     // {$4} - move cursor right 46 columns
+            "════════════════════════════════════════"  // {$5} - horizontal line for outer borders
+        ],
+        "brightColor": false
+    },
+    "modules": [
+        {
+            "type": "version",
+            "key": "╔═══════════════╦═{$5}╗\u001b[35D",
+            "format": "\u001b[1m{#keys} {1} - {2} "
+        },
+        {
+            "type": "os",
+            // Key format breakdown for OS module:
+            // "║  {icon}  \u001b[s{sysname}\u001b[u\u001b[10C│{$3}║{$2}"
+            //
+            // ║                    - Left border of key block
+            //   {icon}             - OS icon (defined internally by fastfetch)
+            //   \u001b[s           - ANSI escape: save cursor position (ESC[s)
+            // {sysname}            - Format variable: system name (e.g., "Linux", "Darwin")
+            // \u001b[u             - ANSI escape: restore cursor to saved position (ESC[u)
+            //                        Necessary because the length of `{sysname}` differs between different platforms
+            // \u001b[10C           - ANSI escape: move cursor right 10 columns (ESC[10C)
+            // │                    - Right border of key block (always 10 columns from left border)
+            // {$3}                 - Reference to constants[2]: move cursor right 47 columns
+            // ║                    - Right border of value block
+            // {$2}                 - Reference to constants[1]: move cursor left 47 columns
+            //
+            // This creates a fixed-width layout where the key block is exactly 10 columns wide,
+            // regardless of the actual content length. The cursor manipulation ensures proper
+            // alignment for the table-like structure.
+            "key": "║  {icon}  \u001b[s{sysname}\u001b[u\u001b[10C║{$3}║{$2}"
+        },
+        {
+            "type": "locale",
+            "key": "║  {icon}  Locale    ║{$3}║{$2}"
+        },
+
+        // Hardware section with cyan color theme
+        {
+            "type": "custom",
+            "key": "║{#cyan}┌──────────────┬{$1}┐{#keys}║\u001b[31D",
+            "format": "{#bright_cyan} Hardware "
+        },
+        {
+            "type": "chassis",
+            // Similar structure but with cyan color formatting:
+            // │{#cyan}│             - Left border with cyan color
+            //  {icon}               - Chassis icon
+            //  Chassis             - Fixed label text
+            // │{$4}│{#keys}║{$2}    - Positioning and borders for value area
+            "key": "║{#cyan}│ {icon}  Chassis   │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "memory",
+            "key": "║{#cyan}│ {icon}  RAM       │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "swap",
+            "key": "║{#cyan}│ {icon}  SWAP      │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "cpu",
+            "key": "║{#cyan}│ {icon}  CPU       │{$4}│{#keys}║{$2}",
+            "showPeCoreCount": true
+        },
+        {
+            "type": "gpu",
+            "key": "║{#cyan}│ {icon}  GPU       │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "disk",
+            "key": "║{#cyan}│ {icon}  Disk      │{$4}│{#keys}║{$2}",
+            "format": "{size-used} \/ {size-total} ({size-percentage}) - {filesystem}",
+        },
+        {
+            "type": "battery",
+            "key": "║{#cyan}│ {icon}  Battery   │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "custom",
+            "key": "║{#cyan}└──────────────┴{$1}┘{#keys}║",
+            "format": ""
+        },
+
+        // Desktop section with green color theme
+        {
+            "type": "custom",
+            "key": "║{#green}┌──────────────┬{$1}┐{#keys}║\u001b[31D",
+            "format": "{#bright_green} Desktop "
+        },
+        {
+            "type": "de",
+            "key": "║{#green}│ {icon}  Desktop   │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "display",
+            "key": "║{#green}│ {icon}  Display   │{$4}│{#keys}║{$2}",
+            "compactType": "original-with-refresh-rate"
+        },
+        {
+            "type": "gpu",
+            "key": "║{#green}│ {icon}  G-Driver  │{$4}│{#keys}║{$2}",
+            "format": "{driver}"
+        },
+        {
+            "type": "custom",
+            "key": "║{#green}└──────────────┴{$1}┘{#keys}║",
+            "format": ""
+        },
+
+        // Terminal section with yellow color theme
+        {
+            "type": "custom",
+            "key": "║{#yellow}┌──────────────┬{$1}┐{#keys}║\u001b[31D",
+            "format": "{#bright_yellow} Terminal "
+        },
+        {
+            "type": "shell",
+            "key": "║{#yellow}│ {icon}  Shell     │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "terminal",
+            "key": "║{#yellow}│ {icon}  Terminal  │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "packages",
+            "key": "║{#yellow}│ {icon}  Packages  │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "custom",
+            "key": "║{#yellow}└──────────────┴{$1}┘{#keys}║",
+            "format": ""
+        },
+
+        // Development section with red color theme
+        {
+            "type": "custom",
+            "key": "║{#red}┌──────────────┬{$1}┐{#keys}║\u001b[33D",
+            "format": "{#bright_red} Development "
+        },
+        {
+            "type": "command",
+            "keyIcon": "",                                   // Custom icon override
+            "key": "║{#red}│ {icon}  Rust      │{$4}│{#keys}║{$2}",
+            "text": "rustc --version",
+            "format": "rustc {~6,13}"                         // Print 6th to 13th characters (version number)
+        },
+        {
+            "type": "command",
+            "condition": {
+                "!system": "Windows"                          // Posix version
+            },
+            "keyIcon": "",
+            "key": "║{#red}│ {icon}  Clang     │{$4}│{#keys}║{$2}",
+            "text": "clang --version | sed -n 's/.*version \\([0-9][0-9.]*\\).*/\\1/p'",
+            "format": "clang {}"
+        },
+        {
+            "type": "command",
+            "condition": {
+                "system": "Windows"                           // Windows version
+            },
+            "keyIcon": "",
+            "key": "║{#red}│ {icon}  Clang     │{$4}│{#keys}║{$2}",
+            "text": "clang --version | findstr version",      // Finds the line with "version"
+            "format": "clang {~-6}"                           // Prints the last 6 characters (version number)
+        },
+        {
+            "type": "command",
+            "keyIcon": "",
+            "key": "║{#red}│ {icon}  NodeJS    │{$4}│{#keys}║{$2}",
+            "text": "node --version",
+            "format": "node {~1}"                             // {~1} removes first character (v)
+        },
+        {
+            "type": "command",
+            "keyIcon": "",
+            "key": "║{#red}│ {icon}  Go        │{$4}│{#keys}║{$2}",
+            "text": "go version | cut -d' ' -f3",
+            "format": "go {~2}"                               // {~2} removes first 2 characters (go)
+        },
+        {
+            "type": "command",
+            "keyIcon": "",
+            "key": "║{#red}│ {icon}  Zig       │{$4}│{#keys}║{$2}",
+            "text": "zig version",
+            "format": "zig {}"
+        },
+        {
+            "type": "editor",
+            "key": "║{#red}│ {icon}  Editor    │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "command",
+            "keyIcon": "󰊢",
+            "key": "║{#red}│ {icon}  Git       │{$4}│{#keys}║{$2}",
+            "text": "git version",
+            "format": "git {~12}"
+        },
+        {
+            "type": "font",
+            "key": "║{#red}│ {icon}  Interface │{$4}│{#keys}║{$2}"
+        },
+        {
+            "type": "custom",
+            "key": "║{#red}└──────────────┴{$1}┘{#keys}║",
+            "format": ""
+        },
+
+        // Network section with magenta color theme
+        {"type": "custom", "key": "║{#magenta}┌──────────────┬{$1}┐{#keys}║\u001b[31D", "format": "{#bright_magenta} Network "},
+        {"type": "users", "myselfOnly": true, "keyIcon": "", "key": "║{#magenta}│ {icon}  User      │{$4}│{#keys}║{$2}", "format": "{name}"},
+        {"type": "command", "shell": "/bin/bash", "keyIcon": "󰩟", "key": "║{#magenta}│ {icon}  Priv IPv4 │{$4}│{#keys}║{$2}", "text": "r=$(ip -4 route get 1.1.1.1 2>/dev/null); if [[ $r =~ src[[:space:]]+([0-9.]+) ]]; then ip=${BASH_REMATCH[1]}; gw=$(ip -4 route show default 2>/dev/null | awk '/default/ {print $3; exit}'); [[ -n $gw ]] && echo \"$ip, $gw\" || echo \"$ip\"; else echo \"192.168.0.0, default gateway\"; fi"},
+        {"type": "command", "shell": "/bin/bash", "keyIcon": "󰖟", "key": "║{#magenta}│ {icon}  Pub IPv4  │{$4}│{#keys}║{$2}", "text": "c=/tmp/ff_pub_ip; if [[ -f $c && -s $c ]]; then cat $c; [[ $(($(date +%s) - $(stat -c %Y $c 2>/dev/null || echo 0))) -gt 600 ]] && (p=$(curl -s -m 2 https://api.ipify.org 2>/dev/null || curl -s -m 2 http://ipinfo.io/ip 2>/dev/null); [[ -n $p ]] && echo $p > $c) & else p=$(curl -s -m 1.5 https://api.ipify.org 2>/dev/null || curl -s -m 1.5 http://ipinfo.io/ip 2>/dev/null); if [[ -n $p && $p =~ ^[0-9.]+$ ]]; then echo $p > $c; echo $p; else echo \"localhost 127.0.0.1\"; fi; fi"},
+        {"type": "command", "shell": "/bin/bash", "keyIcon": "󰩠", "key": "║{#magenta}│ {icon}  IPv6      │{$4}│{#keys}║{$2}", "text": "ip6=$(ip -6 addr show scope global 2>/dev/null | awk '/inet6 / {print $2; exit}' | cut -d/ -f1); [[ -n $ip6 ]] && echo \"$ip6\" || echo \"::1\""},
+        {"type": "custom", "key": "║{#magenta}└──────────────┴{$1}┘{#keys}║", "format": ""},
+        {"type": "custom", "key": "╚═════════════════{$5}╝", "format": ""},
+        "break",                                             // Add a blank line
+        "colors"                                             // Display color palette
+    ]
+}
+
+/*
+Key Format Structure Explanation:
+
+The key format uses a combination of:
+1. Unicode box drawing characters (│ ┌ ┐ └ ┘ ┬ ┴) for borders
+2. ANSI escape codes for cursor positioning (\u001b[...)
+3. Format variables ({icon}, {sysname}, etc.)
+4. Constant references ({$1}, {$2}, etc.)
+5. Color formatting ({#color})
+
+ANSI Escape Codes Used:
+- \u001b[s      - Save cursor position (ESC[s)
+- \u001b[u      - Restore cursor position (ESC[u)
+- \u001b[nC     - Move cursor right n columns (ESC[nC)
+- \u001b[nD     - Move cursor left n columns (ESC[nD)
+
+This creates a table-like layout with fixed column widths and proper alignment,
+regardless of the actual content length in each field.
+
+For more ANSI escape code reference, see:
+https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797#cursor-controls
+*/
+EOF
+chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$FASTFETCH_CONF_DIR"
+
+# ── Configure Adaptive Fastfetch & Window Resize Hook in .zshrc ───────────────
+ZSHRC="$TARGET_HOME/.zshrc"
+if [ -f "$ZSHRC" ] && ! grep -q "_run_adaptive_fastfetch" "$ZSHRC"; then
+  cat <<\EOF >> "$ZSHRC"
+
+# Adaptive fastfetch with dynamic window resize hook
+if [[ -o interactive ]]; then
+  typeset -gi _ff_is_wide=0
+  typeset -gi _ff_allow_resize=1
+
+  _run_adaptive_fastfetch() {
+    local cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+    if (( cols >= 100 )); then
+      _ff_is_wide=1
+      fastfetch
+    else
+      _ff_is_wide=0
+      fastfetch --logo-position top
+    fi
+  }
+
+  # Initial startup display
+  _run_adaptive_fastfetch
+
+  # Dynamically re-render if window is resized between max and min
+  TRAPWINCH() {
+    if [[ $_ff_allow_resize -eq 1 ]]; then
+      local cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+      local now_wide=0
+      (( cols >= 100 )) && now_wide=1
+      if [[ $now_wide -ne $_ff_is_wide ]]; then
+        clear
+        _run_adaptive_fastfetch
+        zle && zle reset-prompt 2>/dev/null
+      fi
+    fi
+  }
+
+  # Once user executes any command, disable resize re-rendering so work is never interrupted
+  _disable_ff_resize() {
+    _ff_allow_resize=0
+  }
+  autoload -Uz add-zsh-hook
+  add-zsh-hook preexec _disable_ff_resize
+
+  # Quick shortcut to clear and show adaptive fastfetch anytime
+  alias ff="clear && _run_adaptive_fastfetch"
+fi
+EOF
+  chown "$TARGET_USER:$(id -gn "$TARGET_USER")" "$ZSHRC"
+fi
+
+# Ensure Powerlevel10k instant prompt is off so it does not suppress fastfetch
+P10K_FILE="$TARGET_HOME/.p10k.zsh"
+if [ -f "$P10K_FILE" ]; then
+  sed -i "s/^  typeset -g POWERLEVEL9K_INSTANT_PROMPT=.*/  typeset -g POWERLEVEL9K_INSTANT_PROMPT=off/" "$P10K_FILE"
+fi
+
+# Launch interactive post-setup in new tabs for tools that require configuration
+if command -v gh &>/dev/null; then
+  open_in_new_tab "GitHub CLI Login" "gh auth login"
+fi
+open_in_new_tab "Fastfetch Layout Preview" "fastfetch; echo ''; echo 'Tip: Your adaptive layout is active. Type ff to refresh!'"
+
+echo "CLI utilities & Fastfetch installed and configured successfully."
 echo "============================================="
 STEP_PASS=$((STEP_PASS + 1))
 else
